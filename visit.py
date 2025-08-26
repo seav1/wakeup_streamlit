@@ -8,7 +8,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 import time
 import sys
 
-URL = "https://dc311eta.streamlit.app/"
+URL = "https://seav01.streamlit.app/"
 
 def setup_driver():
     options = Options()
