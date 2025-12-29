@@ -20,49 +20,36 @@ jobs:
           from playwright.sync_api import sync_playwright
           import time
 
+          # 配置区
           APPS = [
               "https://seav01.streamlit.app/",
               "https://seav02.streamlit.app/",
               "https://aseava.streamlit.app/"
           ]
-          
-          # 选择器配置
-          WAKE_BTN = 'button[data-testid="wakeup-button-viewer"]'
-          TOOLBAR = '[data-testid="stToolbarActions"]'
+          BTN_SELECTOR = 'button[data-testid="wakeup-button-viewer"]'
+          APP_SELECTOR = '.stApp'
 
           def wake(context, url):
               page = context.new_page()
               print(f">>> {url}")
               try:
-                  # 访问并等待基础结构加载
                   page.goto(url, wait_until="commit", timeout=60000)
                   
-                  # 智能等待：监听“唤醒按钮”或“运行中工具栏”
+                  # 等待按钮或 App 容器出现（哪个先出现就处理哪个）
                   try:
-                      page.wait_for_selector(f"{WAKE_BTN}, {TOOLBAR}", timeout=30000)
+                      page.wait_for_selector(f"{BTN_SELECTOR}, {APP_SELECTOR}", timeout=20000)
                   except:
                       pass 
 
-                  if page.locator(WAKE_BTN).is_visible():
-                      print("  [!] 检测到睡眠页，正在点击唤醒...")
-                      page.locator(WAKE_BTN).click(force=True)
-                      # 维持连接 30 秒，确保后端容器有足够时间拉起并看到我们的连接
+                  if page.locator(BTN_SELECTOR).is_visible():
+                      page.locator(BTN_SELECTOR).click(force=True)
+                      print("  [!] 检测到睡眠，已点击唤醒。")
+                      # 关键：维持会话 30 秒确保冷启动完成
                       time.sleep(30)
-                      print("  [√] 唤醒信号已发送并维持。")
-                      
-                  elif page.locator(TOOLBAR).is_visible():
-                      print("  [+] App 状态活跃：已检测到运行工具栏。")
-                      
                   else:
-                      # 兜底：如果都没有，可能还没加载完，多等 10 秒看一眼
-                      time.sleep(10)
-                      if page.locator(TOOLBAR).is_visible():
-                          print("  [+] App 状态活跃（延迟加载确认）。")
-                      else:
-                          print("  [-] 无法确认状态，请检查网络或 URL 是否有效。")
-                          
+                      print("  [-] 已在线。")
               except Exception as e:
-                  print(f"  [x] 运行时异常: {e}")
+                  print(f"  [x] 失败: {e}")
               finally:
                   page.close()
 
