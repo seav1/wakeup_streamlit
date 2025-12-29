@@ -40,54 +40,54 @@ jobs:
               page = context.new_page()
               print(f"\n>>> 访问目标: {url}")
               try:
-                  # 增加超时时间，等待页面响应
-                  page.goto(url, wait_until="load", timeout=90000)
+                  # 1. 尝试多次加载，直到能看到内容或超时
+                  page.goto(url, wait_until="networkidle", timeout=90000)
                   
-                  # 1. 深度等待：给页面 15 秒时间加载各种脚本
-                  print("等待页面渲染中...")
-                  time.sleep(15)
+                  # 给 JS 渲染足够的等待时间（冷启动页面加载慢）
+                  time.sleep(20)
 
-                  # 2. 状态检测 - 尝试多种方式寻找唤醒按钮
-                  # 有时按钮在 Shadow DOM 或特定的类名下
-                  wake_selector = "button:has-text('Wake')"
-                  app_container = ".stApp"
+                  # 2. 检查是否有特定的 Wake Up 文字
+                  # 使用更底层的 JS 查找方式，穿透可能的 Shadow DOM
+                  is_asleep = page.evaluate("() => document.body.innerText.includes('Wake up')")
                   
-                  # 打印页面标题辅助调试
-                  print(f"当前页面标题: {page.title()}")
-
-                  if page.locator(wake_selector).is_visible():
-                      print("状态：[确认睡眠] 发现唤醒按钮，正在点击...")
-                      page.locator(wake_selector).click()
+                  if is_asleep:
+                      print("状态：[确认睡眠] 正在执行强力 JS 点击注入...")
+                      # 注入 JS 直接触发所有按钮的 click 事件
+                      page.evaluate("""() => {
+                          const btns = Array.from(document.querySelectorAll('button'));
+                          const wakeBtn = btns.find(b => b.innerText.includes('Wake up'));
+                          if (wakeBtn) {
+                              wakeBtn.click();
+                              return "Clicked";
+                          }
+                          return "Not Found";
+                      }""")
                       
-                      # 持续保持 40 秒，防止容器启动中断
-                      print("已点击，保持连接以维持冷启动...")
-                      for i in range(4):
+                      # 3. 关键：点击后模拟人类滚动和等待，防止连接过早关闭
+                      print("已发送点击指令，模拟用户交互以维持拉起状态...")
+                      for i in range(6):
+                          page.mouse.wheel(0, 100) # 模拟滚动
                           time.sleep(10)
-                          print(f"维持会话中... ({i+1}/4)")
-                      print(f"结果：{url} 唤醒指令已下达。")
+                          # 检查 stApp 是否出现（意味着醒了）
+                          if page.locator(".stApp").is_visible():
+                              print(f"检测到 .stApp 容器出现！App 已唤醒成功。")
+                              break
+                          print(f"等待容器拉起中... ({i+1}/6)")
                   
-                  elif page.locator(app_container).is_visible():
-                      print("状态：[运行中] 发现 stApp 容器，应用已在线。")
-                  
+                  elif page.locator(".stApp").is_visible():
+                      print("状态：[运行中] 应用已在线。")
                   else:
-                      # 3. 如果还是找不到，输出页面前 200 个字符看看是什么
-                      content = page.content()[:200].replace('\n', '')
-                      print(f"状态：[检测失败] 未发现已知特征。页面片段: {content}")
-                      
-                      # 最后的尝试：强行再等 10 秒并重新检查
-                      time.sleep(10)
-                      if page.get_by_text("Wake", exact=False).is_visible():
-                          page.get_by_text("Wake", exact=False).click()
-                          print("延迟检测成功，已补点击。")
+                      print("状态：[未知] 既没看到按钮也没看到 App，尝试最后强制等待...")
+                      time.sleep(15)
 
               except Exception as e:
-                  print(f"异常：{url} 处理超时或失败: {str(e)}")
+                  print(f"异常：{url} 处理失败: {str(e)}")
               finally:
                   page.close()
 
           with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True)
-              # 关键：模拟一个非常具体的桌面环境，避免被识别为爬虫
+              # 使用带 Stealth 特性的启动参数
+              browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
               context = browser.new_context(
                   user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                   viewport={'width': 1920, 'height': 1080}
