@@ -30,66 +30,69 @@ jobs:
           from playwright.sync_api import sync_playwright
           import time
 
-          # 配置你的 App 列表
           apps = [
               "https://seav01.streamlit.app/",
               "https://seav02.streamlit.app/",
               "https://aseava.streamlit.app/"
           ]
 
-          def process_app(browser_context, url):
-              page = browser_context.new_page()
-              print(f"\n--- 正在处理: {url} ---")
+          def process_app(context, url):
+              page = context.new_page()
+              print(f"\n>>> 访问目标: {url}")
               try:
-                  # 1. 访问页面
-                  # 使用 commit 状态确保基础 DOM 加载完成
-                  page.goto(url, wait_until="commit", timeout=60000)
-                  time.sleep(8) # 给 Streamlit 框架一点初始化的时间
+                  # 增加超时时间，等待页面响应
+                  page.goto(url, wait_until="load", timeout=90000)
+                  
+                  # 1. 深度等待：给页面 15 秒时间加载各种脚本
+                  print("等待页面渲染中...")
+                  time.sleep(15)
 
-                  # 2. 状态检测逻辑
-                  # 检查是否存在 "Wake up" 按钮
-                  wake_button = page.get_by_text("Wake up", exact=False)
+                  # 2. 状态检测 - 尝试多种方式寻找唤醒按钮
+                  # 有时按钮在 Shadow DOM 或特定的类名下
+                  wake_selector = "button:has-text('Wake')"
+                  app_container = ".stApp"
                   
-                  if wake_button.is_visible():
-                      print(f"状态：[睡眠中] 检测到唤醒按钮，正在点击...")
-                      wake_button.click()
+                  # 打印页面标题辅助调试
+                  print(f"当前页面标题: {page.title()}")
+
+                  if page.locator(wake_selector).is_visible():
+                      print("状态：[确认睡眠] 发现唤醒按钮，正在点击...")
+                      page.locator(wake_selector).click()
                       
-                      # 3. 维持会话，等待启动
-                      print("已点击，维持连接中（最长 60 秒）...")
-                      start_time = time.time()
-                      while time.time() - start_time < 60:
+                      # 持续保持 40 秒，防止容器启动中断
+                      print("已点击，保持连接以维持冷启动...")
+                      for i in range(4):
                           time.sleep(10)
-                          # 如果按钮不见了，或者出现了 Streamlit 的主 App 容器
-                          if not wake_button.is_visible() or page.locator(".stApp").is_visible():
-                              print("检测到容器已拉起或按钮消失，正在进行最终握手...")
-                              time.sleep(10) # 确保 WebSocket 稳定
-                              break
-                          print("容器仍在冷启动，保持连接...")
-                      print(f"结果：{url} 唤醒流程执行完毕。")
+                          print(f"维持会话中... ({i+1}/4)")
+                      print(f"结果：{url} 唤醒指令已下达。")
                   
-                  elif page.locator(".stApp").is_visible():
-                      print("状态：[运行中] App 已经是活跃状态。")
+                  elif page.locator(app_container).is_visible():
+                      print("状态：[运行中] 发现 stApp 容器，应用已在线。")
                   
                   else:
-                      print("状态：[未知] 未发现按钮也未发现 App 容器，可能是网络波动或正在重定向。")
-                      # 额外停留一下，防止是因为加载慢导致的误判
+                      # 3. 如果还是找不到，输出页面前 200 个字符看看是什么
+                      content = page.content()[:200].replace('\n', '')
+                      print(f"状态：[检测失败] 未发现已知特征。页面片段: {content}")
+                      
+                      # 最后的尝试：强行再等 10 秒并重新检查
                       time.sleep(10)
+                      if page.get_by_text("Wake", exact=False).is_visible():
+                          page.get_by_text("Wake", exact=False).click()
+                          print("延迟检测成功，已补点击。")
 
               except Exception as e:
-                  print(f"异常：访问 {url} 失败: {str(e)}")
+                  print(f"异常：{url} 处理超时或失败: {str(e)}")
               finally:
                   page.close()
 
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True)
-              # 伪装成真实的桌面 Chrome 浏览器
+              # 关键：模拟一个非常具体的桌面环境，避免被识别为爬虫
               context = browser.new_context(
-                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                  viewport={'width': 1280, 'height': 720}
+                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                  viewport={'width': 1920, 'height': 1080}
               )
-              
               for app_url in apps:
                   process_app(context, app_url)
-              
               browser.close()
           EOF
