@@ -1,8 +1,8 @@
-name: Streamlit Ultra Waker
+name: Streamlit Ultra Waker (Fixed)
 
 on:
   schedule:
-    # 每 20 分钟检查一次，确保不进入深度睡眠
+    # 每 20 分钟检查一次
     - cron: '*/20 * * * *'
   workflow_dispatch: # 支持手动点击 Run workflow 测试
 
@@ -39,58 +39,53 @@ jobs:
 
           def process_app(browser_context, url):
               page = browser_context.new_page()
-              print(f"--- 正在处理: {url} ---")
+              print(f"\n--- 正在处理: {url} ---")
               try:
-                  # 1. 模拟真实浏览器访问
-                  page.goto(url, wait_until="networkidle", timeout=60000)
-                  time.sleep(5) # 给 JS 渲染一点时间
+                  # 1. 访问页面
+                  # 使用 commit 状态确保基础 DOM 加载完成
+                  page.goto(url, wait_until="commit", timeout=60000)
+                  time.sleep(8) # 给 Streamlit 框架一点初始化的时间
 
-                  # 2. 检测睡眠状态
-                  # Streamlit 的唤醒按钮通常位于特定的 Shadow DOM 或具有特定文本
+                  # 2. 状态检测逻辑
+                  # 检查是否存在 "Wake up" 按钮
                   wake_button = page.get_by_text("Wake up", exact=False)
                   
                   if wake_button.is_visible():
-                      print(f"状态：[睡眠中] 正在执行点击唤醒...")
+                      print(f"状态：[睡眠中] 检测到唤醒按钮，正在点击...")
                       wake_button.click()
                       
-                      # 3. 关键：心跳维持 (Heartbeat)
-                      # 点击后，Streamlit 会开始拉起容器。我们需要保持连接，
-                      # 模拟用户正在盯着加载进度条看。
-                      print("已点击按钮，进入会话维持模式（等待容器拉起）...")
-                      
-                      # 循环检查加载状态，最长等待 45 秒
+                      # 3. 维持会话，等待启动
+                      print("已点击，维持连接中（最长 60 秒）...")
                       start_time = time.time()
-                      while time.time() - start_time < 45:
-                          time.sleep(5)
-                          # 如果“Wake up”按钮消失了，说明已经开始进入加载或已经运行
-                          if not page.get_by_text("Wake up", exact=False).is_visible():
-                              print("检测到按钮消失，容器正在初始化或已就绪。")
-                              # 再多待 15 秒，确保 WebSocket 成功建立
-                              time.sleep(15)
-                              break
-                          print("还在启动中，继续维持连接...")
-                      
-                      print(f"成功：已完成 {url} 的唤醒握手。")
-                  else:
-                      # 检测是否已经是运行状态
-                      if page.locator(".stApp").is_visible() or page.locator("canvas").is_count() > 0:
-                          print("状态：[运行中] App 已经是活跃状态，无需唤醒。")
-                      else:
-                          print("状态：[未知] 未发现按钮也未发现 App 核心组件，尝试强制停留 10s。")
+                      while time.time() - start_time < 60:
                           time.sleep(10)
+                          # 如果按钮不见了，或者出现了 Streamlit 的主 App 容器
+                          if not wake_button.is_visible() or page.locator(".stApp").is_visible():
+                              print("检测到容器已拉起或按钮消失，正在进行最终握手...")
+                              time.sleep(10) # 确保 WebSocket 稳定
+                              break
+                          print("容器仍在冷启动，保持连接...")
+                      print(f"结果：{url} 唤醒流程执行完毕。")
+                  
+                  elif page.locator(".stApp").is_visible():
+                      print("状态：[运行中] App 已经是活跃状态。")
+                  
+                  else:
+                      print("状态：[未知] 未发现按钮也未发现 App 容器，可能是网络波动或正在重定向。")
+                      # 额外停留一下，防止是因为加载慢导致的误判
+                      time.sleep(10)
 
               except Exception as e:
-                  print(f"异常：访问 {url} 失败: {e}")
+                  print(f"异常：访问 {url} 失败: {str(e)}")
               finally:
                   page.close()
 
           with sync_playwright() as p:
-              # 使用带指纹伪装的浏览器启动
               browser = p.chromium.launch(headless=True)
+              # 伪装成真实的桌面 Chrome 浏览器
               context = browser.new_context(
                   user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                  viewport={'width': 1280, 'height': 720},
-                  locale="zh-CN"
+                  viewport={'width': 1280, 'height': 720}
               )
               
               for app_url in apps:
