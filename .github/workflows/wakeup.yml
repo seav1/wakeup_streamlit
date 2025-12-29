@@ -1,71 +1,62 @@
-name: Streamlit App Stay Alive
-
-on:
-  schedule:
-    # 每 30 分钟执行一次 (Streamlit 通常在闲置 30-60 分钟后睡眠)
-    - cron: '*/30 * * * *'
-  workflow_dispatch: # 允许你手动点击 "Run workflow" 测试
-
-jobs:
-  wake-apps:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          pip install playwright
-          playwright install chromium
-          playwright install-deps
-
-      - name: Run Wake Script
+- name: Run Wake Script
         run: |
           python - <<EOF
           from playwright.sync_api import sync_playwright
           import time
 
-          # 在这里列出你所有的 App 地址
           apps = [
               "https://seav01.streamlit.app/",
-              "https://seav02.streamlit.app/",
-              "https://aseava.streamlit.app/"
+              "https://seav02.streamlit.app/"
           ]
 
           with sync_playwright() as p:
-              # 启动浏览器
               browser = p.chromium.launch(headless=True)
-              # 模拟一个非常真实的浏览器环境
+              # 增加请求头，更像真实用户
               context = browser.new_context(
-                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                  viewport={'width': 1280, 'height': 720}
               )
               
               for url in apps:
                   page = context.new_page()
-                  print(f"正在尝试唤醒: {url}")
+                  print(f"[{time.strftime('%H:%M:%S')}] 访问: {url}")
                   try:
-                      # 访问页面，等待网络空闲
-                      page.goto(url, wait_until="networkidle", timeout=60000)
+                      # 1. 进入页面
+                      page.goto(url, wait_until="domcontentloaded", timeout=60000)
                       
-                      # 关键逻辑：寻找包含 "Wake" 字样的按钮并点击
-                      # Streamlit 的睡眠页通常有一个 "Wake up" 按钮
+                      # 2. 寻找唤醒按钮
+                      # 有时按钮在 iframe 里或者需要一点时间显示
+                      time.sleep(5) 
                       wake_button = page.get_by_text("Wake", exact=False)
                       
                       if wake_button.is_visible():
+                          print(f"  [!] 检测到睡眠状态，正在执行点击...")
                           wake_button.click()
-                          print(f"  [!] 检测到睡眠页，已模拟点击唤醒按钮。")
-                          # 给它一点时间反应
+                          
+                          # 3. 关键改进：等待“加载中”的状态消失
+                          # 模拟点击后，Streamlit 会显示 "Starting..." 或加载动画
+                          print("  [~] 已点击，正在维持连接以等待容器启动...")
+                          
+                          # 循环检查 30 秒，或者直到按钮消失（说明进入了加载流程）
+                          for _ in range(6):
+                              time.sleep(5)
+                              if not page.get_by_text("Wake", exact=False).is_visible():
+                                  print("  [+] 按钮已消失，App 正在拉起...")
+                                  break
+                          
+                          # 4. 额外等待，确保 WebSocket 握手完成
+                          # 这是最重要的一步，防止过早断开导致唤醒中止
                           time.sleep(15) 
+                          print(f"  [√] 唤醒流程执行完毕: {url}")
                       else:
-                          print(f"  [+] App 看起来已经是活跃状态，无需操作。")
+                          # 检查是否已经显示了正常 App 的元素（比如 Streamlit 的菜单）
+                          if page.locator(".stApp").is_visible():
+                              print(f"  [+] App 已经是活跃状态。")
+                          else:
+                              print(f"  [?] 未发现按钮也未发现 App 内容，可能正在加载中。")
                           
                   except Exception as e:
-                      print(f"  [x] 访问 {url} 时发生错误: {e}")
+                      print(f"  [x] 发生错误: {e}")
                   finally:
                       page.close()
               
