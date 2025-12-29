@@ -1,64 +1,100 @@
-- name: Run Wake Script
+name: Streamlit Ultra Waker
+
+on:
+  schedule:
+    # 每 20 分钟检查一次，确保不进入深度睡眠
+    - cron: '*/20 * * * *'
+  workflow_dispatch: # 支持手动点击 Run workflow 测试
+
+jobs:
+  wake-up-process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install chromium
+          playwright install-deps
+
+      - name: Execute Wake Logic
         run: |
           python - <<EOF
           from playwright.sync_api import sync_playwright
           import time
 
+          # 配置你的 App 列表
           apps = [
               "https://seav01.streamlit.app/",
-              "https://seav02.streamlit.app/"
+              "https://seav02.streamlit.app/",
+              "https://aseava.streamlit.app/"
           ]
 
+          def process_app(browser_context, url):
+              page = browser_context.new_page()
+              print(f"--- 正在处理: {url} ---")
+              try:
+                  # 1. 模拟真实浏览器访问
+                  page.goto(url, wait_until="networkidle", timeout=60000)
+                  time.sleep(5) # 给 JS 渲染一点时间
+
+                  # 2. 检测睡眠状态
+                  # Streamlit 的唤醒按钮通常位于特定的 Shadow DOM 或具有特定文本
+                  wake_button = page.get_by_text("Wake up", exact=False)
+                  
+                  if wake_button.is_visible():
+                      print(f"状态：[睡眠中] 正在执行点击唤醒...")
+                      wake_button.click()
+                      
+                      # 3. 关键：心跳维持 (Heartbeat)
+                      # 点击后，Streamlit 会开始拉起容器。我们需要保持连接，
+                      # 模拟用户正在盯着加载进度条看。
+                      print("已点击按钮，进入会话维持模式（等待容器拉起）...")
+                      
+                      # 循环检查加载状态，最长等待 45 秒
+                      start_time = time.time()
+                      while time.time() - start_time < 45:
+                          time.sleep(5)
+                          # 如果“Wake up”按钮消失了，说明已经开始进入加载或已经运行
+                          if not page.get_by_text("Wake up", exact=False).is_visible():
+                              print("检测到按钮消失，容器正在初始化或已就绪。")
+                              # 再多待 15 秒，确保 WebSocket 成功建立
+                              time.sleep(15)
+                              break
+                          print("还在启动中，继续维持连接...")
+                      
+                      print(f"成功：已完成 {url} 的唤醒握手。")
+                  else:
+                      # 检测是否已经是运行状态
+                      if page.locator(".stApp").is_visible() or page.locator("canvas").is_count() > 0:
+                          print("状态：[运行中] App 已经是活跃状态，无需唤醒。")
+                      else:
+                          print("状态：[未知] 未发现按钮也未发现 App 核心组件，尝试强制停留 10s。")
+                          time.sleep(10)
+
+              except Exception as e:
+                  print(f"异常：访问 {url} 失败: {e}")
+              finally:
+                  page.close()
+
           with sync_playwright() as p:
+              # 使用带指纹伪装的浏览器启动
               browser = p.chromium.launch(headless=True)
-              # 增加请求头，更像真实用户
               context = browser.new_context(
                   user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                  viewport={'width': 1280, 'height': 720}
+                  viewport={'width': 1280, 'height': 720},
+                  locale="zh-CN"
               )
               
-              for url in apps:
-                  page = context.new_page()
-                  print(f"[{time.strftime('%H:%M:%S')}] 访问: {url}")
-                  try:
-                      # 1. 进入页面
-                      page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                      
-                      # 2. 寻找唤醒按钮
-                      # 有时按钮在 iframe 里或者需要一点时间显示
-                      time.sleep(5) 
-                      wake_button = page.get_by_text("Wake", exact=False)
-                      
-                      if wake_button.is_visible():
-                          print(f"  [!] 检测到睡眠状态，正在执行点击...")
-                          wake_button.click()
-                          
-                          # 3. 关键改进：等待“加载中”的状态消失
-                          # 模拟点击后，Streamlit 会显示 "Starting..." 或加载动画
-                          print("  [~] 已点击，正在维持连接以等待容器启动...")
-                          
-                          # 循环检查 30 秒，或者直到按钮消失（说明进入了加载流程）
-                          for _ in range(6):
-                              time.sleep(5)
-                              if not page.get_by_text("Wake", exact=False).is_visible():
-                                  print("  [+] 按钮已消失，App 正在拉起...")
-                                  break
-                          
-                          # 4. 额外等待，确保 WebSocket 握手完成
-                          # 这是最重要的一步，防止过早断开导致唤醒中止
-                          time.sleep(15) 
-                          print(f"  [√] 唤醒流程执行完毕: {url}")
-                      else:
-                          # 检查是否已经显示了正常 App 的元素（比如 Streamlit 的菜单）
-                          if page.locator(".stApp").is_visible():
-                              print(f"  [+] App 已经是活跃状态。")
-                          else:
-                              print(f"  [?] 未发现按钮也未发现 App 内容，可能正在加载中。")
-                          
-                  except Exception as e:
-                      print(f"  [x] 发生错误: {e}")
-                  finally:
-                      page.close()
+              for app_url in apps:
+                  process_app(context, app_url)
               
               browser.close()
           EOF
