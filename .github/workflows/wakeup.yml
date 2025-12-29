@@ -1,93 +1,66 @@
-name: Streamlit Ultra Waker (Fixed)
+name: Streamlit Keep-Alive
 
 on:
   schedule:
-    # 每 20 分钟检查一次
     - cron: '*/20 * * * *'
-  workflow_dispatch: # 支持手动点击 Run workflow 测试
+  workflow_dispatch:
 
 jobs:
-  wake-up-process:
+  wake-apps:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Playwright
+      - name: Setup
         run: |
           pip install playwright
-          playwright install chromium
-          playwright install-deps
+          playwright install chromium --with-deps
 
-      - name: Execute Wake Logic
+      - name: Run Waker
         run: |
           python - <<EOF
           from playwright.sync_api import sync_playwright
           import time
 
-          apps = [
+          # 配置区
+          APPS = [
               "https://seav01.streamlit.app/",
               "https://seav02.streamlit.app/",
               "https://aseava.streamlit.app/"
           ]
+          BTN_SELECTOR = 'button[data-testid="wakeup-button-viewer"]'
+          APP_SELECTOR = '.stApp'
 
-          def process_app(context, url):
+          def wake(context, url):
               page = context.new_page()
-              print(f"\n>>> 访问目标: {url}")
+              print(f">>> {url}")
               try:
-                  # 1. 访问页面并等待
-                  page.goto(url, wait_until="domcontentloaded", timeout=90000)
+                  page.goto(url, wait_until="commit", timeout=60000)
                   
-                  # 关键：等待 15 秒，确保那个特殊的按钮组件被渲染出来
-                  time.sleep(15)
+                  # 等待按钮或 App 容器出现（哪个先出现就处理哪个）
+                  try:
+                      page.wait_for_selector(f"{BTN_SELECTOR}, {APP_SELECTOR}", timeout=20000)
+                  except:
+                      pass 
 
-                  # 2. 使用你提供的 data-testid 精确匹配
-                  # 这个选择器比文字匹配更稳定
-                  selector = 'button[data-testid="wakeup-button-viewer"]'
-                  
-                  if page.locator(selector).is_visible():
-                      print(f"状态：[确认睡眠] 找到目标按钮 {selector}，正在点击...")
-                      # 强制点击，即使它被其他元素挡住
-                      page.locator(selector).click(force=True)
-                      
-                      # 3. 点击后的维持：这是唤醒成功的关键
-                      print("点击成功！进入 60 秒会话维持模式以拉起容器...")
-                      for i in range(6):
-                          time.sleep(10)
-                          # 模拟一次页面滚动，触发 Streamlit 后端的 Activity 监听
-                          page.mouse.wheel(0, 100)
-                          
-                          # 检查 App 容器是否出现
-                          if page.locator(".stApp").is_visible():
-                              print("检测到 .stApp 容器出现！App 已正式上线。")
-                              break
-                          print(f"容器拉起中... ({i+1}/6)")
-                          
-                  elif page.locator(".stApp").is_visible():
-                      print("状态：[运行中] 应用当前已在线。")
+                  if page.locator(BTN_SELECTOR).is_visible():
+                      page.locator(BTN_SELECTOR).click(force=True)
+                      print("  [!] 检测到睡眠，已点击唤醒。")
+                      # 关键：维持会话 30 秒确保冷启动完成
+                      time.sleep(30)
+                  elif page.locator(APP_SELECTOR).is_visible():
+                      print("  [+] App 已在线。")
                   else:
-                      print("状态：[未知] 无法定位按钮。尝试打印当前所有按钮以调试:")
-                      buttons = page.locator("button").all_inner_texts()
-                      print(f"页面上的按钮文字列表: {buttons}")
-
+                      print("  [-] 状态未知。")
               except Exception as e:
-                  print(f"异常：{url} 处理失败: {str(e)}")
+                  print(f"  [x] 失败: {e}")
               finally:
                   page.close()
 
           with sync_playwright() as p:
-              # 禁用自动化标志，模拟纯净浏览器
-              browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+              browser = p.chromium.launch(headless=True)
               context = browser.new_context(
-                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                  viewport={'width': 1280, 'height': 800}
+                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
               )
-              for app_url in apps:
-                  process_app(context, app_url)
+              for url in APPS:
+                  wake(context, url)
               browser.close()
           EOF
