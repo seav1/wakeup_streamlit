@@ -1,0 +1,73 @@
+name: Streamlit App Stay Alive
+
+on:
+  schedule:
+    # 每 30 分钟执行一次 (Streamlit 通常在闲置 30-60 分钟后睡眠)
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # 允许你手动点击 "Run workflow" 测试
+
+jobs:
+  wake-apps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright
+          playwright install chromium
+          playwright install-deps
+
+      - name: Run Wake Script
+        run: |
+          python - <<EOF
+          from playwright.sync_api import sync_playwright
+          import time
+
+          # 在这里列出你所有的 App 地址
+          apps = [
+              "https://seav01.streamlit.app/",
+              "https://seav02.streamlit.app/",
+              "https://aseava.streamlit.app/"
+          ]
+
+          with sync_playwright() as p:
+              # 启动浏览器
+              browser = p.chromium.launch(headless=True)
+              # 模拟一个非常真实的浏览器环境
+              context = browser.new_context(
+                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              )
+              
+              for url in apps:
+                  page = context.new_page()
+                  print(f"正在尝试唤醒: {url}")
+                  try:
+                      # 访问页面，等待网络空闲
+                      page.goto(url, wait_until="networkidle", timeout=60000)
+                      
+                      # 关键逻辑：寻找包含 "Wake" 字样的按钮并点击
+                      # Streamlit 的睡眠页通常有一个 "Wake up" 按钮
+                      wake_button = page.get_by_text("Wake", exact=False)
+                      
+                      if wake_button.is_visible():
+                          wake_button.click()
+                          print(f"  [!] 检测到睡眠页，已模拟点击唤醒按钮。")
+                          # 给它一点时间反应
+                          time.sleep(15) 
+                      else:
+                          print(f"  [+] App 看起来已经是活跃状态，无需操作。")
+                          
+                  except Exception as e:
+                      print(f"  [x] 访问 {url} 时发生错误: {e}")
+                  finally:
+                      page.close()
+              
+              browser.close()
+          EOF
