@@ -1,64 +1,29 @@
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-import time
-import sys
+from playwright.sync_api import sync_playwright
 
-URL = "https://seav01.streamlit.app/"
-
-def setup_driver():
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--remote-debugging-port=9222')
-    options.binary_location = '/usr/bin/chromium-browser'
-    
-    try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        return driver
-    except Exception as e:
-        print(f"Failed to setup driver: {e}")
-        sys.exit(1)
-
-def main():
-    driver = setup_driver()
-    
-    try:
-        print(f"Navigating to {URL}")
-        driver.get(URL)
-        print("Page opened, waiting for content to load...")
-        
-        # Wait for page to load completely
-        WebDriverWait(driver, 30).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
+def force_wake():
+    with sync_playwright() as p:
+        # 模拟真实的浏览器，带有合法的指纹
+        browser = p.chromium.launch(headless=True)
+        # 关键：使用特定的 User-Agent 和 Locale
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
+        page = context.new_page()
         
-        # Look for the wake-up button with explicit wait
-        try:
-            button = WebDriverWait(driver, 15).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Yes, get this app back up!')]"))
-            )
-            button.click()
-            print("Successfully clicked wake-up button.")
-        except Exception as e:
-            print(f"No wake-up button found or app already awake: {e}")
+        print("正在模拟真实浏览器访问...")
+        # 访问主页，这会自动处理所有的 Cookie 和重定向逻辑
+        page.goto("https://aseava.streamlit.app/", wait_until="networkidle")
         
-        # Wait for app to respond
-        time.sleep(15)
-        print("Visit completed successfully.")
-        
-    except Exception as e:
-        print(f"Error during execution: {e}")
-        sys.exit(1)
-    finally:
-        driver.quit()
+        # 寻找“Wake up”按钮并模拟真实点击
+        # 这一步会产生你抓包看到的那个 POST /resume
+        wake_button = page.get_by_text("Wake up", exact=False)
+        if wake_button.is_visible():
+            wake_button.click()
+            print("成功点击唤醒按钮！")
+            page.wait_for_timeout(5000) # 等待 5 秒确认状态
+        else:
+            print("未发现唤醒按钮，App 可能已在线。")
+            
+        browser.close()
 
-if __name__ == "__main__":
-    main()
+force_wake()
